@@ -1,28 +1,30 @@
 /**
- * Placeholder home page — replace this with the app's real home.
- *
- * This is intentionally unstyled scaffolding, not a design to build on.
- * Design the app's own look (layout, theme tokens, typography) from your
- * product's point of view instead of extending this page.
+ * /home — the signed-in front door. Deliberately thin: the product is the
+ * hunts board. (Visual design/theme is scheduled separately — see NOTES.md.)
  */
 
+import { Link } from 'react-router-dom'
 import { useAuthProfileReady } from 'deepspace'
+import { buttonVariants } from '@/components/ui'
 import { APP_NAME } from '../../constants'
 
 export default function HomePage() {
   const { isSignedIn, user } = useAuthProfileReady({ requireUser: true })
 
   return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
-      <h1 className="text-2xl font-semibold">{APP_NAME}</h1>
-      <p className="max-w-md text-sm text-muted-foreground">
-        This is a placeholder page. Replace <code>src/pages/(app)/home.tsx</code>{' '}
-        with the app&apos;s real home, and give the app its own theme in{' '}
-        <code>src/themes.css</code>.
+    <div className="mx-auto flex min-h-full max-w-2xl flex-col justify-center gap-5 px-6 py-16 text-foreground">
+      <p className="text-xs uppercase tracking-widest text-muted-foreground">{APP_NAME}</p>
+      <h1 className="text-3xl font-semibold tracking-tight">Find the exact archive piece, in every market that has it.</h1>
+      <p className="text-muted-foreground">
+        Tell it the designer, piece and season. It searches US resale sites in English and Japanese resale sites in Japanese —
+        where most archive stock actually is — prices every listing door-to-door, and puts the real candidates on a live board.
       </p>
-      {isSignedIn && user && (
-        <p className="text-sm text-muted-foreground">Signed in as {user.name ?? user.email}</p>
-      )}
+      <div>
+        <Link to="/hunts" className={buttonVariants()}>
+          {isSignedIn ? 'Open your hunts' : 'Sign in to start a hunt'}
+        </Link>
+      </div>
+      {isSignedIn && user && <p className="text-xs text-muted-foreground">Signed in as {user.name ?? user.email}</p>}
     </div>
   )
 }
