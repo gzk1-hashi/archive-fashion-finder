@@ -14,7 +14,6 @@ import {
   JobRoom,
   PresenceRoom,
   RecordRoom,
-  resolveAppRole,
   workerErrorHandler,
   YjsRoom,
 } from 'deepspace/worker'
@@ -65,15 +64,25 @@ export class AppCronRoom extends CronRoom<Env> {
   }
 }
 
-/** Runs durable background work defined in src/jobs.ts. */
+/**
+ * Runs durable background work defined in src/jobs.ts.
+ *
+ * The queue is closed to browsers in both directions. Scans are enqueued only
+ * by the startScan action, server-side, after it has checked ownership and
+ * admission (enqueueJob uses the room's internal /enqueue route, which these
+ * checks don't gate). A client that could enqueue directly could start a scan
+ * of any hunt id on the owner's bill; a client that could subscribe would see
+ * every user's job payloads in the room snapshot. Progress reaches the browser
+ * through the hunt row instead, which RBAC already scopes to its owner.
+ */
 export class AppJobRoom extends JobRoom<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env, {
-      authorizeWrite: async (user) => {
-        if (user.userId.startsWith('anon-')) return false
-        const role = await resolveAppRole(env, user.userId)
-        return role === 'member' || role === 'admin'
-      },
+      authorizeWrite: () => false,
+      authorizeRead: () => false,
+      defaultMaxAttempts: 1,
+      // Finished job rows are only for debugging; a day is plenty.
+      retentionMs: 24 * 60 * 60 * 1000,
     })
   }
 
