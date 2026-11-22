@@ -11,6 +11,9 @@
 
 import { z } from 'zod'
 import { MARKETPLACES, MARKETPLACE_IDS, type MarketplaceId } from '../config'
+import type { Availability } from './availability'
+import { parsePrice, type ParsedPrice } from './pricing'
+import { structuredProduct } from './structured-data'
 
 export interface Listing {
   url: string
@@ -202,4 +205,95 @@ export function normalizeSearchResponse(raw: unknown, marketplace: MarketplaceId
     if (listing && !out.has(listing.url)) out.set(listing.url, listing)
   }
   return [...out.values()]
+}
+
+// ─── Listing pages (firecrawl/scrape) ────────────────────────────────────────
+
+export interface ListingPage {
+  /** Page text as markdown ('' if the provider returned none). */
+  markdown: string
+  /** og:image (https only) — the listing's main photo on every marketplace we search. */
+  imageUrl?: string
+  /** Structured price from meta tags, when the site publishes one. */
+  price?: ParsedPrice
+  /** HTTP status the provider saw. 404/410 = the listing was deleted. */
+  statusCode?: number
+  /** What the call actually billed, when the integration reports it. */
+  costUsd?: number
+  /**
+   * Availability the page declares in machine-readable form (schema.org
+   * JSON-LD / microdata, or a product:availability meta tag). Absent when the
+   * page publishes none — then the page-copy markers decide.
+   */
+  declaredAvailability?: Exclude<Availability, 'unknown'>
+}
+
+/** og/product meta availability values seen in the wild: "instock", "in stock", "oos", "out of stock". */
+function metaAvailability(meta: Record<string, unknown>): ListingPage['declaredAvailability'] {
+  const v = metaString(meta, 'product:availability', 'og:availability', 'availability')
+    ?.toLowerCase()
+    .replace(/^https?:\/\/schema\.org\//, '')
+    .replace(/[\s_-]/g, '')
+  if (!v) return undefined
+  if (['instock', 'available', 'preorder', 'limitedavailability'].includes(v)) return 'available'
+  if (['outofstock', 'oos', 'soldout', 'discontinued'].includes(v)) return 'sold'
+  return undefined
+}
+
+/** Meta values arrive as a string, or as an array when the tag repeats. */
+function metaString(meta: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const v = meta[key]
+    const s = Array.isArray(v) ? v.find((x) => typeof x === 'string') : v
+    if (typeof s === 'string' && s.trim()) return s.trim()
+  }
+  return undefined
+}
+
+/**
+ * Price from the page's structured data. Grailed, eBay and most shops publish
+ * og/product price tags; reading those beats regexing a page full of other
+ * listings' prices.
+ */
+function metaPrice(meta: Record<string, unknown>): ParsedPrice | undefined {
+  const amountRaw = metaString(meta, 'product:price:amount', 'og:price:amount', 'price', 'twitter:data1')
+  if (!amountRaw) return undefined
+  const amount = Number(amountRaw.replace(/[^\d.]/g, ''))
+  const currency = (metaString(meta, 'product:price:currency', 'og:price:currency', 'priceCurrency') ?? '').toUpperCase()
+  if (!Number.isFinite(amount) || amount <= 0) return undefined
+  if (currency === 'JPY') return { amount, currency: 'JPY', text: `¥${amount.toLocaleString('en-US')}` }
+  if (currency === 'USD') return { amount, currency: 'USD', text: `$${amount.toLocaleString('en-US')}` }
+  return parsePrice(amountRaw) ?? undefined
+}
+
+/**
+ * Raw scrape response → ListingPage. The integration returns
+ * `{ data: <Firecrawl payload>, creditsUsed, costUsd }` (its published output
+ * schema); the payload itself has been wrapped differently over time
+ * (`{ markdown, metadata }`, `{ data: { markdown, metadata } }`), so it's
+ * unwrapped by shape. An explicit
+ * `{ success: false }` throws so the caller counts a failure.
+ */
+export function normalizePage(raw: unknown): ListingPage {
+  // The integration wraps Firecrawl's payload as { data, creditsUsed, costUsd }.
+  const billed = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).costUsd : undefined
+  let node: unknown = raw
+  for (let depth = 0; depth < 3 && node && typeof node === 'object'; depth++) {
+    const obj = node as Record<string, unknown>
+    if (obj.success === false) throw new Error(`scrape provider error: ${String(obj.error ?? obj.message ?? 'unknown')}`)
+    if ('markdown' in obj || 'metadata' in obj) break
+    node = obj.data
+  }
+  const obj = (node && typeof node === 'object' ? node : {}) as Record<string, unknown>
+  const meta = (obj.metadata && typeof obj.metadata === 'object' ? obj.metadata : {}) as Record<string, unknown>
+  // Raw HTML is read for its schema.org data and then dropped — never stored.
+  const product = structuredProduct(typeof obj.rawHtml === 'string' ? obj.rawHtml : typeof obj.html === 'string' ? obj.html : undefined)
+  return {
+    markdown: typeof obj.markdown === 'string' ? obj.markdown : '',
+    imageUrl: httpsOrUndefined(metaString(meta, 'ogImage', 'og:image', 'og:image:secure_url', 'twitter:image') ?? product.imageUrl),
+    price: product.price ?? metaPrice(meta),
+    declaredAvailability: product.availability ?? metaAvailability(meta),
+    statusCode: typeof meta.statusCode === 'number' ? meta.statusCode : undefined,
+    costUsd: typeof billed === 'number' && Number.isFinite(billed) && billed >= 0 ? billed : undefined,
+  }
 }

@@ -7,12 +7,13 @@
  * provider instead of a bespoke integration call.
  */
 
-import { generateText, Output, type LanguageModelUsage, type UserContent } from 'ai'
+import { generateText, NoObjectGeneratedError, Output, type LanguageModelUsage, type UserContent } from 'ai'
 import { createDeepSpaceAI } from 'deepspace/worker'
 import { MODELS, MODEL_PRICING_PER_MTOK } from '../config'
 import type { Candidate, HuntFilterInput } from '../lib/filter'
-import { buildUserPrompt, SYSTEM_PROMPT, VerdictSchema, type Verdict } from '../lib/verdict'
+import { buildUserPrompt, normalizeVerdict, SYSTEM_PROMPT, VerdictSchema, type Verdict } from '../lib/verdict'
 import type { Env } from '../../worker'
+import { PaidCallError } from './scan-engine'
 
 export function costOf(usage: Pick<LanguageModelUsage, 'inputTokens' | 'outputTokens'>, model: string = MODELS.scorer): number {
   const price = MODEL_PRICING_PER_MTOK[model]
@@ -28,22 +29,42 @@ export function createScorer(env: Env, signal?: AbortSignal) {
       { type: 'text', text: buildUserPrompt(hunt, { ...c, priceText: c.price?.text }) },
     ]
     if (withImage && c.imageUrl) content.push({ type: 'image', image: new URL(c.imageUrl) })
-    const result = await generateText({
-      model,
-      instructions: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content }],
-      output: Output.object({ schema: VerdictSchema, name: 'verdict' }),
-      // Classification, not creative writing: same listing, same answer.
-      temperature: 0,
-      maxOutputTokens: 500,
-      // The engine owns retry policy (and counts failures); one SDK retry
-      // absorbs a transient 529 without hiding a real outage.
-      maxRetries: 1,
-      // A hung request must not eat the slice (or the 15-minute alarm ceiling).
-      timeout: 45_000,
-      abortSignal: signal,
-    })
-    return { verdict: result.output as Verdict, costUsd: costOf(result.usage) }
+    try {
+      const result = await generateText({
+        model,
+        instructions: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content }],
+        output: Output.object({ schema: VerdictSchema, name: 'verdict' }),
+        // Haiku 5.5 thinks adaptively, and thinking tokens count against the
+        // output cap. A tight cap (the first version used 500) truncates the
+        // JSON mid-object — "could not parse the response". Low effort keeps
+        // the thinking short; the cap leaves room for it plus the verdict.
+        // Same settings the SDK's own Haiku summarizer uses.
+        providerOptions: { anthropic: { effort: 'low' } },
+        maxOutputTokens: 4000,
+        // No `temperature`: this model rejects sampling parameters and the SDK
+        // would drop it with a warning on every call. Consistency comes from
+        // the strict output schema and the fixed prompt instead.
+        //
+        // The engine owns retry policy (and counts failures); one SDK retry
+        // absorbs a transient 529 without hiding a real outage.
+        maxRetries: 1,
+        // A hung request must not eat the slice (or the 15-minute alarm ceiling).
+        timeout: 45_000,
+        abortSignal: signal,
+      })
+      return { verdict: normalizeVerdict(result.output as Verdict), costUsd: costOf(result.usage) }
+    } catch (err) {
+      // A reply that didn't parse was still generated — and billed. Carry the
+      // cost and the reason (finishReason 'length' = truncated) to the engine.
+      if (NoObjectGeneratedError.isInstance(err)) {
+        throw new PaidCallError(
+          `no verdict (finishReason=${err.finishReason ?? 'unknown'}, outputTokens=${err.usage?.outputTokens ?? '?'})`,
+          err.usage ? costOf(err.usage) : 0,
+        )
+      }
+      throw err
+    }
   }
 
   return async function score(hunt: HuntFilterInput, c: Candidate): Promise<{ verdict: Verdict; costUsd: number }> {

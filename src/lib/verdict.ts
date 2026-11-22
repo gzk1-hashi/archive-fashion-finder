@@ -10,23 +10,48 @@ import type { MatchVerdict } from '../types'
 import type { Candidate, HuntFilterInput } from './filter'
 
 /**
- * What the model must return. Enforced twice: the AI SDK sends it as the
- * structured-output schema, and parses the reply against it, so a malformed
- * answer is an error we can count, never a half-filled row on the board.
- * Lengths are capped here rather than trusted — the strings land in the UI.
+ * What the model must return. Sent to the provider as the structured-output
+ * schema (constrained decoding: the reply is valid JSON of this shape) and
+ * parsed against it again by the AI SDK.
+ *
+ * Deliberately no length/range limits in the schema itself: structured-output
+ * JSON Schema support for maxLength / maxItems / minimum varies by provider,
+ * and a limit the provider ignores becomes a local parse failure — a paid call
+ * thrown away over a 141-character reason. The limits are stated to the model
+ * in the descriptions and enforced after parsing by `normalizeVerdict`.
  */
 export const VerdictSchema = z.object({
-  score: z.number().int().min(0).max(100).describe('0–100 confidence that this listing is the exact piece being hunted.'),
+  score: z.number().describe('Integer 0–100: confidence that this listing is the exact piece being hunted.'),
   verdict: z
     .enum(['exact', 'likely', 'possible', 'no'])
     .describe('exact = this specific piece/season; likely = same piece, season unconfirmed; possible = same designer and garment type; no = not it.'),
-  reasons: z.array(z.string().max(140)).max(4).describe('Short evidence for the score, each under 140 characters.'),
+  reasons: z.array(z.string()).describe('Up to 4 short pieces of evidence for the score, each under 140 characters.'),
   redFlags: z
-    .array(z.string().max(140))
-    .max(4)
-    .describe('Authenticity or condition concerns visible in the listing text or photo. Empty if none.'),
+    .array(z.string())
+    .describe('Up to 4 authenticity or condition concerns visible in the listing text or photo, each under 140 characters. Empty if none.'),
+  appearsSold: z
+    .boolean()
+    .describe('true if the title, snippet or photo indicates the item has already sold or the listing has ended (e.g. "Sold", 売り切れ, a SOLD stamp on the photo).'),
 })
 export type Verdict = z.infer<typeof VerdictSchema>
+
+export const VERDICT_LIMITS = { items: 4, chars: 140 } as const
+
+const clip = (t: string) => {
+  const s = t.trim()
+  return s.length > VERDICT_LIMITS.chars ? `${s.slice(0, VERDICT_LIMITS.chars - 1)}…` : s
+}
+
+/**
+ * Enforce what the schema only asks for: an integer score in 0–100, at most 4
+ * non-empty strings per list, each at most 140 characters. These strings land
+ * in the UI and in the database, so they're bounded here, never trusted.
+ */
+export function normalizeVerdict(v: Verdict): Verdict {
+  const list = (xs: string[]) => xs.map(clip).filter(Boolean).slice(0, VERDICT_LIMITS.items)
+  const score = Number.isFinite(v.score) ? Math.min(100, Math.max(0, Math.round(v.score))) : 0
+  return { score, verdict: v.verdict, reasons: list(v.reasons), redFlags: list(v.redFlags), appearsSold: v.appearsSold === true }
+}
 
 export const SYSTEM_PROMPT = `You are an archive-fashion authenticator triaging resale listings for a collector.
 
@@ -38,6 +63,7 @@ Ground rules:
 - A listing that names the right designer and garment but no season is "likely" at best, not "exact".
 - A different season code, a diffusion or licensed line the collector didn't ask for, or a different garment type pushes the score down hard.
 - Treat "replica", "inspired", "-style", 〜風, レプリカ, or prices far below market for the piece as red flags.
+- The listing page was already checked and looked for sale. If anything you see still says it sold or ended (a "Sold" label, 売り切れ, a SOLD stamp on the photo), set appearsSold to true — the collector only wants pieces they can buy.
 - Keep reasons concrete ("title says 02SS", "katakana brand matches"), not generic.`
 
 export interface PromptListing extends Pick<Candidate, 'title' | 'snippet' | 'marketplace' | 'signals'> {
@@ -66,10 +92,12 @@ export function buildUserPrompt(hunt: HuntFilterInput, listing: PromptListing): 
 /**
  * Model verdict → board verdict, or null to keep it off the board. The score
  * threshold is ours, not the model's: a "likely" at 45 stays off, an "exact"
- * at 58 stays off. And a model that says "no" never gets on the board however
- * it scored, because the two fields disagreeing means one of them is wrong.
+ * at 58 stays off. A model that says "no" never gets on the board however it
+ * scored, because the two fields disagreeing means one of them is wrong. And
+ * anything the model reads as sold stays off, whatever the page check said —
+ * for availability, any "sold" evidence wins.
  */
 export function toBoardVerdict(v: Verdict, threshold: number = FUNNEL.matchThreshold): MatchVerdict | null {
-  if (v.verdict === 'no' || v.score < threshold) return null
+  if (v.appearsSold || v.verdict === 'no' || v.score < threshold) return null
   return v.verdict
 }

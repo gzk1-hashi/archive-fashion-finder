@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalUrl, extractHits, isListingUrl, marketplaceForUrl, normalizeSearchResponse } from './listings'
+import { canonicalUrl, extractHits, isListingUrl, marketplaceForUrl, normalizePage, normalizeSearchResponse } from './listings'
 
 describe('canonicalUrl', () => {
   it.each([
@@ -80,5 +80,48 @@ describe('normalizeSearchResponse', () => {
     expect(out.map((l) => l.url)).toEqual(['https://grailed.com/listings/111', 'https://grailed.com/listings/222'])
     expect(out[0]).toMatchObject({ title: 'Junya SS02', snippet: '$450', marketplace: 'grailed' })
     expect(out[1].imageUrl).toBe('https://img/x.jpg')
+  })
+})
+
+describe('normalizePage', () => {
+  it('unwraps either response shape and reads og:image + structured price', () => {
+    const page = { markdown: '# Junya parka\nPurchase', metadata: { ogImage: 'https://cdn.grailed.com/a.jpg', 'product:price:amount': '420.00', 'product:price:currency': 'USD' } }
+    for (const raw of [page, { data: page }, { data: { data: page } }]) {
+      expect(normalizePage(raw)).toEqual({
+        markdown: '# Junya parka\nPurchase',
+        imageUrl: 'https://cdn.grailed.com/a.jpg',
+        price: { amount: 420, currency: 'USD', text: '$420' },
+        statusCode: undefined,
+        costUsd: undefined,
+        declaredAvailability: undefined,
+      })
+    }
+  })
+
+  it('handles repeated meta tags (arrays) and JPY prices', () => {
+    const p = normalizePage({ metadata: { 'og:image': ['https://static.mercdn.net/x.jpg', 'https://static.mercdn.net/y.jpg'], 'og:price:amount': '38000', 'og:price:currency': 'JPY' } })
+    expect(p.imageUrl).toBe('https://static.mercdn.net/x.jpg')
+    expect(p.price).toEqual({ amount: 38000, currency: 'JPY', text: '¥38,000' })
+    expect(p.markdown).toBe('')
+  })
+
+  it('reads the integration envelope { data, creditsUsed, costUsd }', () => {
+    const p = normalizePage({ data: { markdown: 'Purchase', metadata: { statusCode: 200 } }, creditsUsed: 1, costUsd: 0.0011 })
+    expect(p).toMatchObject({ markdown: 'Purchase', statusCode: 200, costUsd: 0.0011 })
+  })
+
+  it('reads schema.org availability from raw HTML, then meta tags', () => {
+    const rawHtml = '<script type="application/ld+json">{"@type":"Product","offers":{"availability":"https://schema.org/SoldOut","price":"38000","priceCurrency":"JPY"}}</script>'
+    expect(normalizePage({ data: { markdown: '購入手続きへ', rawHtml, metadata: {} } })).toMatchObject({
+      declaredAvailability: 'sold',
+      price: { amount: 38000, currency: 'JPY' },
+    })
+    expect(normalizePage({ markdown: '', metadata: { 'product:availability': 'in stock' } }).declaredAvailability).toBe('available')
+    expect(normalizePage({ markdown: '', metadata: { 'product:availability': 'oos' } }).declaredAvailability).toBe('sold')
+  })
+
+  it('drops non-https images and throws on provider failure', () => {
+    expect(normalizePage({ markdown: 'x', metadata: { ogImage: 'http://insecure/x.jpg' } }).imageUrl).toBeUndefined()
+    expect(() => normalizePage({ success: false, error: 'blocked' })).toThrow(/blocked/)
   })
 })

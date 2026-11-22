@@ -11,7 +11,7 @@ import type { CollectionSchema } from 'deepspace/schema'
  * it through the RecordRoom tools API (X-App-Action), which skips RBAC.
  */
 
-export const SEEN_OUTCOMES = ['matched', 'low-score', 'red-flag', 'over-budget', 'off-target', 'error'] as const
+export const SEEN_OUTCOMES = ['matched', 'low-score', 'red-flag', 'over-budget', 'off-target', 'sold', 'error'] as const
 
 export const seenSchema: CollectionSchema = {
   name: 'seen_listings',

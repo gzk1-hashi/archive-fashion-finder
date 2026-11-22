@@ -1,12 +1,14 @@
 /**
  * The free part of the funnel. Everything here is deterministic and costs
- * nothing, and it runs before a single model call: drop what's already been
- * paid for, drop what announces itself as fake, drop what blows the budget,
+ * nothing, and it runs before a single paid call: drop what's already been
+ * paid for, drop what the snippet already says is sold, drop what announces
+ * itself as fake, drop what blows the budget,
  * then rank the rest so the model's limited calls go to the most promising
  * listings first.
  */
 
 import { FUNNEL } from '../config'
+import { soldInText } from './availability'
 import type { SeenOutcome } from '../types'
 import { designerForms, garmentJa, sizeAliases } from './designers'
 import type { Listing } from './listings'
@@ -33,7 +35,7 @@ export interface Candidate extends Listing {
 
 export interface Rejection {
   listing: Listing
-  outcome: Extract<SeenOutcome, 'red-flag' | 'over-budget' | 'off-target'>
+  outcome: Extract<SeenOutcome, 'red-flag' | 'over-budget' | 'off-target' | 'sold'>
   detail: string
 }
 
@@ -131,6 +133,11 @@ export function prefilter(
     if (seen.has(listing.url) || handled.has(listing.url)) continue
     handled.add(listing.url)
     const text = `${listing.title} ${listing.snippet}`
+
+    if (soldInText(text)) {
+      rejected.push({ listing, outcome: 'sold', detail: 'search snippet says sold / ended' })
+      continue
+    }
 
     const flag = redFlagIn(text)
     if (flag) {

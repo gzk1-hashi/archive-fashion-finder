@@ -26,11 +26,12 @@ export function MatchCard({ match, onStatus }: Props) {
   const [imgFailed, setImgFailed] = useState(false)
   const verdict = VERDICT_STYLE[match.verdict]
   const market = MARKETPLACES[match.marketplace]
+  const sold = match.availability === 'sold'
   const reasons = Array.isArray(match.reasons) ? match.reasons : []
   const redFlags = Array.isArray(match.redFlags) ? match.redFlags : []
 
   return (
-    <article className="flex flex-col overflow-hidden rounded-lg border border-border bg-card">
+    <article className={`flex flex-col overflow-hidden rounded-lg border border-border bg-card ${sold ? 'opacity-60' : ''}`}>
       <a
         href={match.url}
         target="_blank"
@@ -46,15 +47,20 @@ export function MatchCard({ match, onStatus }: Props) {
             decoding="async"
             referrerPolicy="no-referrer"
             onError={() => setImgFailed(true)}
-            className="h-full w-full object-cover"
+            className={`h-full w-full object-cover ${sold ? 'grayscale' : ''}`}
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">No photo in search result</div>
+          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">No photo on the listing</div>
         )}
         <div className="absolute left-2 top-2 flex gap-1.5">
           <Badge variant={verdict.variant} size="sm">
             {verdict.label} · {match.score}
           </Badge>
+          {sold && (
+            <Badge variant="destructive" size="sm">
+              Sold
+            </Badge>
+          )}
         </div>
       </a>
 
@@ -90,7 +96,13 @@ export function MatchCard({ match, onStatus }: Props) {
         )}
 
         <div className="mt-auto flex gap-2 pt-2">
-          {match.status === 'saved' || match.status === 'dismissed' ? (
+          {sold ? (
+            match.status !== 'dismissed' && (
+              <Button size="sm" variant="outline" className="flex-1" onClick={() => onStatus('dismissed')}>
+                Dismiss
+              </Button>
+            )
+          ) : match.status === 'saved' || match.status === 'dismissed' ? (
             <Button size="sm" variant="ghost" className="flex-1" onClick={() => onStatus('new')}>
               Move back to new
             </Button>

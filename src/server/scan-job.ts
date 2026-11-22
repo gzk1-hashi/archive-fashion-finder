@@ -14,11 +14,11 @@
 import type { Job, JobContext } from 'deepspace/worker'
 import { z } from 'zod'
 import { FUNNEL } from '../config'
-import { normalizeSearchResponse } from '../lib/listings'
+import { normalizePage, normalizeSearchResponse } from '../lib/listings'
 import type { PlannedQuery } from '../lib/queries'
-import type { HuntData } from '../types'
+import type { HuntData, MatchData } from '../types'
 import type { Env } from '../../worker'
-import { initialState, progressOf, runSlice, summaryOf, type ScanPorts, type ScanState } from './scan-engine'
+import { initialState, progressOf, runSlice, summaryOf, type BoardItem, type ScanPorts, type ScanState } from './scan-engine'
 import { actingAs, createIfAbsent, getHunt } from './records'
 import { createScorer } from './score'
 
@@ -32,7 +32,7 @@ export type ScanPayload = z.infer<typeof ScanPayload>
 
 /** Minimal structural check on a checkpoint before trusting it. */
 function isState(v: unknown): v is ScanState {
-  return !!v && typeof v === 'object' && (v as ScanState).v === 1 && typeof (v as ScanState).phase === 'string'
+  return !!v && typeof v === 'object' && (v as ScanState).v === 2 && typeof (v as ScanState).phase === 'string'
 }
 
 export async function runScanJob(job: Job, ctx: JobContext, env: Env): Promise<unknown> {
@@ -65,7 +65,42 @@ export async function runScanJob(job: Job, ctx: JobContext, env: Env): Promise<u
       })
       return normalizeSearchResponse(raw, q.marketplace)
     },
+    async fetchPage(url: string) {
+      const raw = await records.integrations.call('firecrawl/scrape', {
+        url,
+        // rawHtml carries the page's schema.org product data (availability,
+        // price, image) — the most reliable signal, and it's in <script> tags
+        // that markdown drops. Markdown is the fallback for sites that publish
+        // none. Metadata (og:image, status code) comes back with every scrape.
+        formats: ['markdown', 'rawHtml'],
+        // Listing body only — recommendation carousels are other people's
+        // items, and their "SOLD" badges would read as this one's.
+        onlyMainContent: true,
+        // Firecrawl-side page timeout (ms): a slow marketplace page fails fast
+        // instead of holding a slice open.
+        timeout: 20_000,
+      })
+      return normalizePage(raw)
+    },
     score,
+    async listBoard(): Promise<BoardItem[]> {
+      const rows = (await records.records.query('matches', { where: { huntId }, limit: 500 })) as Array<{
+        recordId: string
+        data: MatchData
+      }>
+      return rows
+        .filter((r) => r.data.availability !== 'sold' && r.data.status !== 'dismissed')
+        .map((r) => ({
+          recordId: r.recordId,
+          url: r.data.url,
+          marketplace: r.data.marketplace,
+          imageUrl: r.data.imageUrl,
+          priceText: r.data.priceText,
+        }))
+    },
+    async updateMatch(recordId, patch) {
+      await records.records.update('matches', recordId, patch as Record<string, unknown>)
+    },
     async loadSeen() {
       const rows = (await records.records.query('seen_listings', { where: { huntId }, limit: 5000 })) as Array<{
         data: { url: string }

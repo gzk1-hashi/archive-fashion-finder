@@ -21,7 +21,7 @@ import { deleteHunt, startScan } from '../../../../lib/api'
 import { isLeaseActive } from '../../../../lib/lease'
 import type { HuntData, MatchData, MatchStatus } from '../../../../types'
 
-type Tab = 'new' | 'saved' | 'dismissed'
+type Tab = 'new' | 'saved' | 'sold' | 'dismissed'
 const VERDICT_RANK: Record<MatchData['verdict'], number> = { exact: 0, likely: 1, possible: 2 }
 
 export default function HuntBoardPage() {
@@ -52,8 +52,16 @@ export default function HuntBoardPage() {
         b.data.score - a.data.score ||
         b.createdAt.localeCompare(a.createdAt),
     )
-    const groups: Record<Tab, typeof sorted> = { new: [], saved: [], dismissed: [] }
-    for (const m of sorted) groups[(m.data.status ?? 'new') as Tab].push(m)
+    // Sold pieces leave New and Saved the moment a rescan finds them gone —
+    // they're kept in their own tab rather than deleted, so a saved piece
+    // never silently disappears.
+    const groups: Record<Tab, typeof sorted> = { new: [], saved: [], sold: [], dismissed: [] }
+    for (const m of sorted) {
+      const status = m.data.status ?? 'new'
+      if (status === 'dismissed') groups.dismissed.push(m)
+      else if (m.data.availability === 'sold') groups.sold.push(m)
+      else groups[status].push(m)
+    }
     return groups
   }, [matchRows])
 
@@ -128,6 +136,7 @@ export default function HuntBoardPage() {
         <TabsList>
           <TabsTrigger value="new">New ({byTab.new.length})</TabsTrigger>
           <TabsTrigger value="saved">Saved ({byTab.saved.length})</TabsTrigger>
+          {byTab.sold.length > 0 && <TabsTrigger value="sold">Sold ({byTab.sold.length})</TabsTrigger>}
           <TabsTrigger value="dismissed">Dismissed ({byTab.dismissed.length})</TabsTrigger>
         </TabsList>
       </Tabs>

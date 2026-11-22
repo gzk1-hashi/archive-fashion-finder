@@ -140,7 +140,7 @@ export const MODEL_PRICING_PER_MTOK: Record<string, { input: number; output: num
 }
 
 /** Bump whenever the scoring prompt changes; stored on every match row. */
-export const PROMPT_VERSION = 'v1'
+export const PROMPT_VERSION = 'v2' // v2: appearsSold field, availability instruction
 
 // ─── Scan funnel ─────────────────────────────────────────────────────────────
 
@@ -153,6 +153,10 @@ export const FUNNEL = {
   maxScoredPerScan: 30,
   /** Listings scored concurrently. Small: the proxy is shared and rate-limited. */
   scoreConcurrency: 4,
+  /** Listing pages fetched concurrently (availability + photo + price). */
+  pageConcurrency: 4,
+  /** Pieces already on the board re-checked for "still for sale" at the start of each scan. */
+  maxRechecksPerScan: 20,
   /** Score at or above which a listing is written to the board. */
   matchThreshold: 60,
   /** Stop the scan after this many consecutive provider failures. */
@@ -173,6 +177,15 @@ export const FUNNEL = {
  * row abort the scan instead of retrying through an outage.
  */
 export const SEARCH_COST_USD = { ok: 0.00216, failed: 0.65 } as const
+
+/**
+ * firecrawl/scrape, one listing page. The integration returns the real cost
+ * (`costUsd`) with every successful call and the engine uses that; `ok` is the
+ * fallback estimate (1 credit × $0.00083 × 1.3 platform markup). Failures
+ * return no cost, so they're assumed to bill like failed searches — the
+ * conservative choice for the budget gate.
+ */
+export const PAGE_COST_USD = { ok: 0.00108, failed: 0.65 } as const
 
 /**
  * Hard ceiling on what one scan may spend, in USD, checked before every paid

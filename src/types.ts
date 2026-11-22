@@ -6,12 +6,13 @@
 
 import type { MarketplaceId } from './config'
 import type { HUNT_STATUSES } from './schemas/hunts-schema'
-import type { MATCH_STATUSES, MATCH_VERDICTS } from './schemas/matches-schema'
+import type { MATCH_AVAILABILITY, MATCH_STATUSES, MATCH_VERDICTS } from './schemas/matches-schema'
 import type { SEEN_OUTCOMES } from './schemas/seen-schema'
 
 export type HuntStatus = (typeof HUNT_STATUSES)[number]
 export type MatchStatus = (typeof MATCH_STATUSES)[number]
 export type MatchVerdict = (typeof MATCH_VERDICTS)[number]
+export type MatchAvailability = (typeof MATCH_AVAILABILITY)[number]
 export type SeenOutcome = (typeof SEEN_OUTCOMES)[number]
 
 export interface HuntData {
@@ -43,6 +44,7 @@ export interface MatchData {
   reasons?: string[]
   redFlags?: string[]
   promptVersion?: string
+  availability?: MatchAvailability
   status?: MatchStatus
   savedAt?: string
 }

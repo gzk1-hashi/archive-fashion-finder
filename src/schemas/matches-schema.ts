@@ -20,6 +20,7 @@ import { MARKETPLACE_IDS } from '../config'
 
 export const MATCH_STATUSES = ['new', 'saved', 'dismissed'] as const
 export const MATCH_VERDICTS = ['exact', 'likely', 'possible'] as const
+export const MATCH_AVAILABILITY = ['available', 'sold'] as const
 
 export const matchesSchema: CollectionSchema = {
   name: 'matches',
@@ -55,6 +56,15 @@ export const matchesSchema: CollectionSchema = {
     // Which prompt produced this verdict — lets a later prompt change be
     // compared against old rows instead of silently mixing them.
     { name: 'promptVersion', storage: 'text', interpretation: 'plain', maxLength: 20 },
+    // Server-owned. Every match was proven for sale when it was written; each
+    // rescan re-opens the page and flips this to 'sold' when it's gone, so the
+    // board never offers a piece that can't be bought.
+    {
+      name: 'availability',
+      storage: 'text',
+      interpretation: { kind: 'select', options: [...MATCH_AVAILABILITY] },
+      default: 'available',
+    },
     {
       name: 'status',
       storage: 'text',
