@@ -49,3 +49,38 @@ reuses the current CLI login and requires no separate connection. If it reports
 headless shell without an action, run `npx deepspace auth login --help` and use
 the operator-supplied credential path it names; never invent credentials or put
 a password on the command line.
+
+## Archive Fashion Finder — project rules
+
+These sit on top of everything above. Read `NOTES.md` for the running log.
+
+- **Owner workflow.** Geah reviews every change line by line before it is
+  committed. Agents write code and tests; they do not commit, push or deploy.
+  Never run `npx deepspace push` — the app ships from GitHub. Commit and push
+  before every deploy, because deploy ships the working tree as-is.
+- **Secrets.** Only through `npx deepspace secrets`. Never in `.dev.vars`,
+  env-var prefixes, logs, commits or screenshots.
+- **Trust boundary.** Action tools and the scan job's record context run with
+  RBAC off (`X-App-Action`). Every action parses params with Zod, loads the
+  target record and compares `createdBy` to the caller before writing, and
+  answers "not found" for both missing and not-yours. The job re-checks hunt
+  ownership against its enqueuer.
+- **Job queue is server-only.** `AppJobRoom` denies all client reads and
+  writes. Enqueue with `enqueueJob(...)` from an action after admission checks
+  (`src/lib/lease.ts`, `SCAN_ADMISSION` in `src/config.ts`). Progress goes to
+  the hunt row, never to a JobRoom broadcast message.
+- **Money.** Every paid call is gated by `SCAN_BUDGET_USD` and the
+  consecutive-failure stop (a failed firecrawl call bills a flat $0.65).
+  Models are pinned in `MODELS`; never use a provider default. Dated facts
+  (FX, proxy fees, model prices) carry their `asOf` date — update the date
+  when you update the number.
+- **Schemas are the security model.** Server-owned columns stay out of
+  `writableFields`; user/model text has `maxLength`; dedupe is `uniqueOn`, not
+  application code. `src/schemas.test.ts` (including the SDK's `lintSchemas`)
+  must stay green.
+- **Pure core, thin edges.** Query building, pricing, filtering, verdict rules
+  and the scan state machine are pure and unit-tested; only `src/server/*.ts`
+  touches the platform or the AI SDK. Keep it that way — new logic gets a test
+  beside it.
+- **Verify before claiming done:** `npm run validate` (tsc + vitest),
+  `npm run lint`, `npx vite build`.
