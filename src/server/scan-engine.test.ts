@@ -274,6 +274,30 @@ describe('scan engine', () => {
     expect(state.stoppedBecause).toBeUndefined()
   })
 
+  it('a full board during a page outage costs one probe, not the search budget', async () => {
+    const board = Array.from({ length: 8 }, (_, i): BoardItem => ({
+      recordId: `m${i}`,
+      url: `https://grailed.com/listings/${90 + i}`,
+      marketplace: 'grailed',
+    }))
+    let boardFetches = 0
+    const { ports, matches } = fakePorts({
+      listBoard: vi.fn(async () => board),
+      fetchPage: vi.fn(async (url: string): Promise<ListingPage> => {
+        if (board.some((b) => b.url === url)) {
+          boardFetches++
+          throw new Error('provider down')
+        }
+        return { markdown: '$300\nPurchase' }
+      }),
+    })
+    const { state } = await runToEnd(ports)
+    expect(boardFetches).toBe(1)
+    expect(ports.search).toHaveBeenCalledTimes(state.queries.length)
+    expect(matches.length).toBeGreaterThan(0)
+    expect(state.stoppedBecause).toBeUndefined()
+  })
+
   it('reports monotonic progress that ends at 1', async () => {
     const { ports, reports } = fakePorts()
     const { state } = await runToEnd(ports)

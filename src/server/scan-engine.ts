@@ -239,7 +239,13 @@ async function recheckPhase(s: ScanState, ports: ScanPorts, deadline: number): P
     if (mustPause(s, ports, deadline)) return
     const room = roomFor(s, PAGE_COST_USD.ok)
     if (room <= 0) break // rechecking is a courtesy; never spend the search budget on it
-    const batch = s.board.slice(s.nextBoard, s.nextBoard + Math.min(FUNNEL.pageConcurrency, room))
+    // A failed page is booked like a failed search ($0.65), so a full batch
+    // failing during an outage would spend the whole scan budget before the
+    // search even starts. The first fetch is a lone probe; only once a page has
+    // come back does the pass batch. (Any failure ends the pass, so reaching
+    // nextBoard > 0 — even after a resume — means every fetch so far worked.)
+    const size = s.nextBoard === 0 ? 1 : Math.min(FUNNEL.pageConcurrency, room)
+    const batch = s.board.slice(s.nextBoard, s.nextBoard + size)
     const outcomes = await Promise.all(
       batch.map(async (item): Promise<'ok' | 'failed'> => {
         const page = await fetchPaid(s, ports, item.url)
@@ -263,10 +269,10 @@ async function recheckPhase(s: ScanState, ports: ScanPorts, deadline: number): P
     )
     s.nextBoard += batch.length
     await ports.report(progressOf(s), 'Re-checking pieces on your board')
-    // Rechecking is a courtesy pass: if a whole batch fails, the provider is
+    // Rechecking is a courtesy pass: any failure means the provider may be
     // struggling — stop rechecking (no further paid failures) and let the
     // search run on its own failure rules.
-    if (outcomes.every((o) => o === 'failed')) break
+    if (outcomes.some((o) => o === 'failed')) break
   }
   s.board = []
   s.phase = 'search'

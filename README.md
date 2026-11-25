@@ -53,6 +53,16 @@ finding out the piece already sold. This app does that work for you.
 | Actions (start scan, delete hunt) | `src/actions/index.ts` |
 | UI | `src/pages/(app)/(protected)/hunts/`, `src/components/hunts/` |
 
+The code is layered, and each layer only depends on the one below it:
+
+| Layer | What it is | Files |
+|---|---|---|
+| Presentation | React pages and components; reads live data, never decides business rules | `src/pages/`, `src/components/` |
+| Application | Server actions (permission and admission checks) and the job adapter | `src/actions/`, `src/server/scan-job.ts` |
+| Domain | Pure logic with no platform or network code: queries, pricing, filtering, availability, verdict rules, the scan state machine | `src/lib/`, `src/server/scan-engine.ts` |
+| Infrastructure | Database access, AI calls, search and scrape integrations | `src/server/records.ts`, `src/server/score.ts`, DeepSpace SDK |
+| Data model | Schemas, which double as the permission rules | `src/schemas/` |
+
 A scan runs through phases: **recheck → search → filter → verify → score →
 done**. It runs in slices of about 60 seconds and checkpoints between them with
 `ctx.continue`, so it survives restarts. Writes are idempotent (`uniqueOn`
@@ -73,8 +83,8 @@ ten-slice resume without any network.
   see everyone's job payloads. Progress reaches the UI through the hunt row
   instead, which permissions already scope. Ownership is checked in the action
   *and* again inside the job.
-- **Money guardrails.** Each scan has a hard budget ($1.50), checked before
-  every paid call. A failed provider call can bill a flat $0.65, so two failures
+- **Money guardrails.** Each scan has a budget ($1.50), checked before every
+  paid batch. A failed provider call can bill a flat $0.65, so two failures
   in a row stop the scan instead of retrying through an outage. A healthy scan
   costs about a cent. The model is pinned, never "latest".
 - **Sold evidence wins.** A listing is shown only if its page *positively* says
@@ -104,7 +114,7 @@ DeepSpace's built-in integrations.
 
 ## Tests
 
-- **193 unit tests in 17 files (Vitest).** They cover query building, katakana
+- **194 unit tests in 17 files (Vitest).** They cover query building, katakana
   and season handling, landed pricing, the filter, sold/available detection on
   real page snippets, schema.org parsing, the verdict contract, and the scan
   engine (budget, failures, cancellation, resume).

@@ -5,6 +5,41 @@ to verify. Newest session on top.
 
 ---
 
+## Session 4 — Tue Nov 24, evening (agent review before submission; Geah on the laptop)
+
+### Platform blockers (not code)
+
+- `npx deepspace deploy` fails with `release_in_progress` from both machines;
+  `releases` = 0, `status` = "never deployed". Reported via `deepspace feedback`.
+- `firecrawl/search` returns Firecrawl 402 `insufficient_credits` ("team has 0
+  left") although the account has 459 credits. The engine stopped after two
+  failures as designed. Reported via `deepspace feedback` (3e57b4cd…).
+
+### Full code review — one real bug fixed
+
+- **Recheck could burn the scan budget during an outage.** The board recheck
+  fetched 4 pages at once; each failed page is booked at $0.65, so one failed
+  batch ($2.60) exceeded the $1.50 budget and the search never ran. Now the
+  first recheck fetch is a single probe and any failure ends the pass.
+  Test: "a full board during a page outage costs one probe, not the search
+  budget" (failed before the fix, passes after). `src/server/scan-engine.ts`
+- README: layered-architecture table; budget wording ("before every paid
+  batch"); test count.
+
+### Verified by the agent
+
+`tsc --noEmit` clean · `vitest` 17 files / 194 tests · `eslint .` clean ·
+`vite build` OK.
+
+### Known, left as is (documented)
+
+- If the job throws before its first checkpoint (e.g. the hunt read fails),
+  the hunt stays `queued` until the 20-minute lease expires.
+- The board's "running" check uses the time of the last render, so a dead
+  lease only clears from the UI on the next update or refresh.
+
+---
+
 ## Session 2 — Sat Nov 21, 4:00 PM → evening (agent, while Geah was at work)
 
 Goal for the day (from the plan): Friday + Saturday items — schemas, hunt form
